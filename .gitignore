@@ -25,3 +25,11 @@ TestResults.xml
 
 *.json
 *.jsonl
+*.lock
+*.npy
+*.index
+*.txt
+*.pdf
+*.graphml
+*.html
+*.toml
