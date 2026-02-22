@@ -397,12 +397,57 @@ def _extract_json_string_value_partial(text: str, key: str) -> Optional[str]:
     return "".join(out_chars)
 
 
+def _contains_latex_math(text: str) -> bool:
+    t = str(text or "")
+    if not t.strip():
+        return False
+    if "$$" in t:
+        return True
+    if re.search(r"(?<!\$)\$(?!\$).+?(?<!\$)\$(?!\$)", t, flags=re.S):
+        return True
+    if "\\(" in t or "\\[" in t:
+        return True
+    return False
+
+
+def _maybe_add_formula_fallback(answer_obj: Dict[str, Any], *, question: str) -> Dict[str, Any]:
+    """
+    Last-resort formula insertion for explicit formula asks when the model produced no math.
+    Keeps scope narrow to reward-modeling style asks.
+    """
+    q = (question or "").strip().lower()
+    wants_reward_model_formula = (
+        ("reward model" in q)
+        or ("reward modeling" in q)
+        or ("preference model" in q)
+        or ("preference learning" in q)
+    )
+    if not wants_reward_model_formula:
+        return answer_obj
+
+    summary = str(answer_obj.get("summary", "") or "")
+    if _contains_latex_math(summary):
+        return answer_obj
+    for kp in answer_obj.get("key_points", []) or []:
+        if _contains_latex_math(str(kp.get("point", "") or "")):
+            return answer_obj
+
+    formula_block = (
+        "\n\nMathematical form (pairwise reward modeling / Bradley-Terry):\n"
+        "$$P(y_w \\succ y_l\\mid x)=\\sigma\\left(r_{\\theta}(x,y_w)-r_{\\theta}(x,y_l)\\right)$$\n"
+        "$$\\mathcal{L}(\\theta)=-\\mathbb{E}_{(x,y_w,y_l)}\\left[\\log\\sigma\\left(r_{\\theta}(x,y_w)-r_{\\theta}(x,y_l)\\right)\\right]$$"
+    )
+    answer_obj["summary"] = summary.rstrip() + formula_block
+    return answer_obj
+
+
 def generate_britannica_answer(
     evidence_pack: Dict[str, Any],
     *,
     model: str,
     perspective: str = "balanced",
     steering_profile: Optional[Dict[str, Any]] = None,  # <-- add
+    formula_requested: bool = False,
     answer_mode: str = "balanced",
     temperature: float = 0.2,
     max_chunks: int = 10,
@@ -461,10 +506,12 @@ def generate_britannica_answer(
         "5) Source hierarchy is mandatory: atlas chunk/claim evidence first, external scholarly second, external web last.\n"
         "6) If external evidence is used, label uncertainty and keep it subordinate to atlas evidence.\n\n"
         "7) You may infer implications from cited evidence, but do not invent new facts, numbers, experiments, or citations.\n"
-        "8) Use LaTeX only when equation-like notation appears in cited evidence; do not introduce new equations.\n"
-        "9) If using LaTeX, preserve symbols and structure from the evidence (inline $...$ or block $$...$$).\n\n"
-        "10) The summary must be substantial (around 120-200 words), coherent, and rewritten in clean prose.\n"
-        "11) Do not copy rough fragment text from chunks verbatim; synthesize and normalize phrasing.\n\n"
+        "8) If the user explicitly asks for a formula/equation, include at least one LaTeX equation in the summary.\n"
+        "9) Prefer equations grounded in cited evidence. If no explicit equation is present but the method has a "
+        "widely used canonical objective, you may include that canonical form and label it as canonical.\n"
+        "10) Use Markdown-compatible LaTeX delimiters: inline $...$ or block $$...$$.\n\n"
+        "11) The summary must be substantial (around 120-200 words), coherent, and rewritten in clean prose.\n"
+        "12) Do not copy rough fragment text from chunks verbatim; synthesize and normalize phrasing.\n\n"
         f"{response_mode_instruction}\n\n"
         f"STEERING PROFILE (controls tone + emphasis; do not change factual grounding):\n"
         f"- label: {profile.get('label')}\n"
@@ -484,6 +531,7 @@ def generate_britannica_answer(
                 "Do not invent paper names, results, or metrics not in evidence.",
                 "When helpful, explain implications inferred from the evidence and present uncertainty explicitly.",
                 "Write an expanded opening summary before bullet sections (not just 1-2 short sentences).",
+                "If formula_requested is true, include at least one LaTeX equation in the summary.",
             ],
             "citation_rules": [
                 'Cite chunks by {"kind":"chunk","id":"<chunk_id>"} (chunk_id is an integer rendered as a string).',
@@ -492,6 +540,7 @@ def generate_britannica_answer(
                 "Citations must refer to IDs present in the evidence digest.",
             ],
             "perspective": _perspective_instructions(perspective),
+            "formula_requested": bool(formula_requested),
             "evidence_digest": digest,
         },
         ensure_ascii=False,
@@ -537,6 +586,8 @@ def generate_britannica_answer(
         raise RuntimeError("Empty output_text from model.")
     out = json.loads(raw)
     out = _maybe_rephrase_bullets(client, model=model, answer_obj=out)
+    if formula_requested:
+        out = _maybe_add_formula_fallback(out, question=str(evidence_pack.get("question", "")))
 
     # Optional: validate citations refer to known IDs (light sanity)
     known_chunk_ids = {str(c["chunk_id"]) for c in digest["chunks"]}
@@ -631,6 +682,7 @@ def generate_britannica_answer(
     out["_meta"] = {
         "model": model,
         "perspective": perspective,
+        "formula_requested": bool(formula_requested),
         "temperature": temperature,
         "external_results_count": len(digest.get("external_results", []) or []),
         "digest_limits": {"max_chunks": max_chunks, "max_claims": max_claims, "max_relations": max_relations},

@@ -502,8 +502,11 @@ def _render_answer_with_evidence_refs(payload: Dict[str, Any], rows: List[Dict[s
 
     row_by_citation: Dict[str, int] = {}
     row_obj_by_citation: Dict[str, Dict[str, Any]] = {}
+    row_obj_by_id: Dict[int, Dict[str, Any]] = {}
     for r in rows:
         rid = int(r.get("row", 0))
+        if rid:
+            row_obj_by_id[rid] = r
         for ek in r.get("evidence_keys", []) or []:
             if ek:
                 row_by_citation[str(ek)] = rid
@@ -521,6 +524,15 @@ def _render_answer_with_evidence_refs(payload: Dict[str, Any], rows: List[Dict[s
         return sorted(out)
 
     def _source_link(row_id: int) -> str:
+        row = row_obj_by_id.get(row_id, {})
+        title = str(row.get("title", "")).strip()
+        section = str(row.get("section", "")).strip()
+        tooltip = title
+        if section:
+            tooltip = f"{title} - {section}" if title else section
+        if tooltip:
+            safe_tooltip = tooltip.replace('"', "'")
+            return f"[Source {row_id}](#evidence-m{msg_idx}-r{row_id} \"{safe_tooltip}\")"
         return f"[Source {row_id}](#evidence-m{msg_idx}-r{row_id})"
 
     contradiction_edges = (
@@ -571,35 +583,46 @@ def _render_answer_with_evidence_refs(payload: Dict[str, Any], rows: List[Dict[s
             )
         return pairs
 
+    def _inline_source_refs(raw_cits: Any) -> str:
+        rows_here = _rows_for_citations(raw_cits)
+        if not rows_here:
+            return ""
+        return ", ".join([_source_link(r) for r in rows_here])
+
     key_points = ans.get("key_points", []) or []
     if key_points:
         lines.append("\n### Key Points")
         for i, kp in enumerate(key_points, 1):
-            lines.append(f"{i}. {kp.get('point', '').strip()}")
-            rows_here = _rows_for_citations(kp.get("citations", []))
-            if rows_here:
-                refs = ", ".join([_source_link(r) for r in rows_here])
-                lines.append(f"   - Sources: {refs}")
+            point_text = kp.get("point", "").strip()
+            refs = _inline_source_refs(kp.get("citations", []))
+            if refs:
+                lines.append(f"{i}. {point_text} ({refs})")
+            else:
+                lines.append(f"{i}. {point_text}")
 
     debates = ans.get("debates_and_contradictions", []) or []
     if debates:
         lines.append("\n### Debates / Contradictions")
         for i, d in enumerate(debates, 1):
-            lines.append(f"{i}. {d.get('debate', '').strip()}")
-            rows_here = _rows_for_citations(d.get("citations", []))
-            if rows_here:
-                refs = ", ".join([_source_link(r) for r in rows_here])
-                lines.append(f"   - Sources: {refs}")
+            debate_text = d.get("debate", "").strip()
+            refs = _inline_source_refs(d.get("citations", []))
+            if refs:
+                lines.append(f"{i}. {debate_text} ({refs})")
+            else:
+                lines.append(f"{i}. {debate_text}")
             pairs = _contradiction_pairs_for_citations(d.get("citations", []))
             if pairs:
                 p = pairs[0]
                 src_ref = _source_link(p["src_row"]) if p.get("src_row") else p["src_title"]
                 dst_ref = _source_link(p["dst_row"]) if p.get("dst_row") else p["dst_title"]
-                lines.append(f"   - Contradiction: {src_ref} contradicts {dst_ref}.")
                 if p.get("src_claim") or p.get("dst_claim"):
                     c1 = p.get("src_claim", "a different claim")
                     c2 = p.get("dst_claim", "an opposing claim")
-                    lines.append(f"   - Contrast: {src_ref} argues \"{c1}\" while {dst_ref} argues \"{c2}\".")
+                    lines.append(
+                        f"   - In {src_ref}, the claim is \"{c1}\" while in {dst_ref}, the claim is \"{c2}\"."
+                    )
+                else:
+                    lines.append(f"   - In {src_ref}, the evidence conflicts with {dst_ref}.")
 
     limitations = ans.get("limitations", []) or []
     if limitations:
@@ -643,6 +666,28 @@ def _render_evidence_explorer(rows: List[Dict[str, Any]], *, msg_idx: int) -> No
         if r.get("url"):
             st.markdown(f"- Source link: [{r['url']}]({r['url']})")
         st.markdown("---")
+
+
+def _render_markdown_with_math(text: str) -> None:
+    """
+    Render markdown and display-math blocks without showing raw $$...$$ delimiters.
+    """
+    raw = str(text or "")
+    if not raw.strip():
+        return
+    pattern = re.compile(r"\$\$(.+?)\$\$", flags=re.S)
+    cursor = 0
+    for m in pattern.finditer(raw):
+        before = raw[cursor : m.start()]
+        if before.strip():
+            st.markdown(before)
+        equation = (m.group(1) or "").strip()
+        if equation:
+            st.latex(equation)
+        cursor = m.end()
+    tail = raw[cursor:]
+    if tail.strip():
+        st.markdown(tail)
 
 
 def _guided_query(step: Dict[str, Any], choice: str, free_text: str) -> str:
@@ -1109,7 +1154,7 @@ def _render_chat_tab(service: AtlasService) -> None:
                     msg.get("evidence_rows", []),
                     msg_idx=msg_idx,
                 )
-                st.markdown(answer_md)
+                _render_markdown_with_math(answer_md)
             else:
                 st.markdown(msg["content"])
             if msg.get("role") == "assistant" and msg.get("evidence_rows") is not None:
@@ -1156,7 +1201,8 @@ def _render_chat_tab(service: AtlasService) -> None:
             if not delta:
                 return
             stream_chunks.append(delta)
-            stream_placeholder.markdown("".join(stream_chunks))
+            with stream_placeholder.container():
+                _render_markdown_with_math("".join(stream_chunks))
 
         def _on_stage(stage: str) -> None:
             stage_placeholder.info(f"Research pipeline: {stage}")

@@ -389,6 +389,19 @@ def _looks_like_inventory_request(user_message: str) -> bool:
     return any(s in t for s in signals)
 
 
+def _looks_like_formula_request(user_message: str) -> bool:
+    t = (user_message or "").strip().lower()
+    triggers = [
+        "formula",
+        "equation",
+        "latex",
+        "objective",
+        "loss function",
+        "mathematical form",
+    ]
+    return any(tok in t for tok in triggers)
+
+
 CORPUS_GROUP_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -676,6 +689,7 @@ def chat_turn(
         model=ANSWER_MODEL,
         perspective=profile["label"],          # for logging/debug
         steering_profile=profile,              # <-- NEW: passed into stage 9 prompt
+        formula_requested=_looks_like_formula_request(user_message),
         answer_mode=answer_mode,
         temperature=0.2,
         max_chunks=10,
