@@ -127,7 +127,9 @@ def rewrite_followup_to_standalone(
         "You must produce both (a) a standalone retrieval query and (b) an execution plan "
         "that decides retrieval depth, fallback preference, and answer style. "
         "Choose plans from user intent, ambiguity, and question complexity. "
-        "Do not add facts."
+        "Do not add facts. "
+        "If the user message is unrelated to AI alignment/safety (including greetings/smalltalk), set intent='other' "
+        "and keep the standalone query minimal."
     )
 
     user = json.dumps(
@@ -138,7 +140,10 @@ def rewrite_followup_to_standalone(
             "latest_user_message": user_message,
             "output_requirements": {
                 "standalone_query": "A single sentence query suitable for semantic retrieval.",
-                "intent": "Classify intent (explain, compare, find_evidence, definition, critique, list_corpus, other).",
+                "intent": (
+                    "Classify intent (explain, compare, find_evidence, definition, critique, list_corpus, other). "
+                    "Use 'other' for out-of-scope requests or greetings/smalltalk."
+                ),
                 "key_terms": "List of key terms (snake_case preferred).",
                 "topic": "Short topic label (<= 8 words).",
                 "answer_mode": "strict for citation-tight asks, balanced by default, expansive for deep/clarifying asks.",
@@ -402,6 +407,21 @@ def _looks_like_formula_request(user_message: str) -> bool:
     return any(tok in t for tok in triggers)
 
 
+def _build_scope_guardrail_answer() -> Dict[str, Any]:
+    return {
+        "title": "Alignment Atlas Scope",
+        "summary": (
+            "I am here to help with AI alignment and safety topics, such as reward modeling, "
+            "reward hacking, oversight/evals, interpretability, and deployment risk.\n\n"
+            "If you share a question in those areas, I can provide evidence-grounded answers and cite sources."
+        ),
+        "key_points": [],
+        "debates_and_contradictions": [],
+        "limitations": [],
+        "citations": [],
+    }
+
+
 CORPUS_GROUP_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -596,6 +616,38 @@ def chat_turn(
 
     state.memory["topic"] = topic
     state.memory["key_terms"] = list(dict.fromkeys(key_terms))[:20]
+
+    # Scope guardrail (model-decided): rely on planner intent for out-of-scope turns.
+    if intent == "other":
+        if stage_handler is not None:
+            stage_handler("Applying scope guardrail")
+        ans = _build_scope_guardrail_answer()
+        suggestions = [
+            "What is reward modeling in RLHF?",
+            "How do researchers detect deceptive alignment?",
+            "What are strong mitigations for reward hacking?",
+            "Which interpretability methods are most useful for safety?",
+        ]
+        state.history.append(Turn(role="user", content=user_message))
+        state.history.append(Turn(role="assistant", content=(ans.get("summary", "") or "")))
+        payload = {
+            "rewritten_query": standalone_query,
+            "intent": intent,
+            "topic": topic,
+            "answer_mode": answer_mode,
+            "tool_plan": tool_plan,
+            "steering_profile": profile,
+            "evidence_status": "Scope guardrail",
+            "fallback_reason": "Query appears outside Alignment Atlas scope.",
+            "fallback_used": False,
+            "atlas_quality": {"num_chunks": 0, "num_claims": 0, "top_score": 0.0, "mean_top3_score": 0.0},
+            "external_sources_used": 0,
+            "external_errors": [],
+            "answer": ans,
+            "suggestions": suggestions,
+            "evidence_pack": {"question": user_message, "chunks": [], "claims": [], "relations": {}},
+        }
+        return state, payload
 
     if intent == "list_corpus" or _looks_like_inventory_request(user_message):
         if stage_handler is not None:
