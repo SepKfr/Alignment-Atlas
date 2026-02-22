@@ -535,54 +535,6 @@ def _render_answer_with_evidence_refs(payload: Dict[str, Any], rows: List[Dict[s
             return f"[Source {row_id}](#evidence-m{msg_idx}-r{row_id} \"{safe_tooltip}\")"
         return f"[Source {row_id}](#evidence-m{msg_idx}-r{row_id})"
 
-    contradiction_edges = (
-        ((payload.get("evidence_pack", {}) or {}).get("relations", {}) or {}).get("contradiction", []) or []
-    )
-
-    def _short_claim_text(s: str, max_len: int = 140) -> str:
-        t = re.sub(r"\s+", " ", (s or "")).strip()
-        if not t:
-            return ""
-        if len(t) <= max_len:
-            return t
-        t = t[:max_len].rsplit(" ", 1)[0].rstrip(" ,;:")
-        return t + "..."
-
-    def _contradiction_pairs_for_citations(raw_cits: Any) -> List[Dict[str, Any]]:
-        cited_claim_ids = {c["id"] for c in _normalize_citations(raw_cits) if c["kind"] == "claim"}
-        if not cited_claim_ids:
-            return []
-        pairs: List[Dict[str, Any]] = []
-        seen = set()
-        for e in contradiction_edges:
-            src = str(e.get("src", "")).strip()
-            dst = str(e.get("dst", "")).strip()
-            if not src or not dst:
-                continue
-            if src not in cited_claim_ids or dst not in cited_claim_ids:
-                continue
-            src_row = row_obj_by_citation.get(f"claim:{src}", {})
-            dst_row = row_obj_by_citation.get(f"claim:{dst}", {})
-            src_title = str(src_row.get("title", "")).strip() or str(src_row.get("doc_id", "")).strip() or src
-            dst_title = str(dst_row.get("title", "")).strip() or str(dst_row.get("doc_id", "")).strip() or dst
-            src_row_id = int(src_row.get("row", 0) or 0)
-            dst_row_id = int(dst_row.get("row", 0) or 0)
-            key = tuple(sorted([src_title.lower(), dst_title.lower()]))
-            if key in seen or src_title.lower() == dst_title.lower():
-                continue
-            seen.add(key)
-            pairs.append(
-                {
-                    "src_title": src_title,
-                    "dst_title": dst_title,
-                    "src_row": src_row_id,
-                    "dst_row": dst_row_id,
-                    "src_claim": _short_claim_text(str(src_row.get("snippet_full", ""))),
-                    "dst_claim": _short_claim_text(str(dst_row.get("snippet_full", ""))),
-                }
-            )
-        return pairs
-
     def _inline_source_refs(raw_cits: Any) -> str:
         rows_here = _rows_for_citations(raw_cits)
         if not rows_here:
@@ -610,19 +562,6 @@ def _render_answer_with_evidence_refs(payload: Dict[str, Any], rows: List[Dict[s
                 lines.append(f"{i}. {debate_text} ({refs})")
             else:
                 lines.append(f"{i}. {debate_text}")
-            pairs = _contradiction_pairs_for_citations(d.get("citations", []))
-            if pairs:
-                p = pairs[0]
-                src_ref = _source_link(p["src_row"]) if p.get("src_row") else p["src_title"]
-                dst_ref = _source_link(p["dst_row"]) if p.get("dst_row") else p["dst_title"]
-                if p.get("src_claim") or p.get("dst_claim"):
-                    c1 = p.get("src_claim", "a different claim")
-                    c2 = p.get("dst_claim", "an opposing claim")
-                    lines.append(
-                        f"   - In {src_ref}, the claim is \"{c1}\" while in {dst_ref}, the claim is \"{c2}\"."
-                    )
-                else:
-                    lines.append(f"   - In {src_ref}, the evidence conflicts with {dst_ref}.")
 
     limitations = ans.get("limitations", []) or []
     if limitations:
