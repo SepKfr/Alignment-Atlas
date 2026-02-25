@@ -12,8 +12,10 @@ dependencies = [
     "networkx>=3.6.1",
     "numpy>=2.4.2",
     "openai>=2.21.0",
+    "Pillow>=10.0.0",
     "plotly>=6.5.2",
     "pypdf>=6.7.1",
+    "PyMuPDF>=1.24.0",
     "requests>=2.32",
     "sentencepiece>=0.2.1",
     "streamlit>=1.54.0",
@@ -21,10 +23,12 @@ dependencies = [
     "tqdm>=4.67.3",
     "transformers>=5.2.0",
     "uvicorn>=0.37.0",
+    "pytest>=9.0.2",
 ]
 
 [project.optional-dependencies]
 dev = [
+    "pytest>=7.0.0",
     "ruff>=0.4",
 ]
 

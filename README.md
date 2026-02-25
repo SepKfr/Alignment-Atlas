@@ -146,7 +146,9 @@ python -m src.ingest.cli reingest --clean --skip-relations
 
 ### Stage 05: Build knowledge graph
 `build_kg` stage (`src/ingest/stages.py`)
-- Builds graph with paper, claim, and tag nodes
+- Reads `data/processed/claims.jsonl` and optional `data/processed/docs.jsonl`.
+- Optionally reads `data/processed/figures.jsonl` (from the figures pipeline); adds figure nodes and `paper -> figure` edges so image-to-text is linked to the same papers as claims.
+- Builds graph with paper, claim, tag, and (optional) figure nodes
 - Writes:
   - `data/processed/kg/graph.graphml`
   - `data/processed/kg/graph.json`
@@ -289,6 +291,8 @@ Optional common vars:
 - `GROBID_REQUIRED=1|0` (require GROBID vs permit pypdf fallback)
 
 ## 3) Run app
+
+**Server deployment (systemd):** To run the app and Grobid as services so Grobid is always up for PDF extraction, see **[deploy/README.md](deploy/README.md)**. Use `deploy/grobid.service` and `deploy/alignment-atlas.service`; the app unit starts after Grobid.
 
 Streamlit:
 

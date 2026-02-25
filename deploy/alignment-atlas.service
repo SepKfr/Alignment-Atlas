@@ -1,0 +1,42 @@
+# Alignment Atlas Streamlit app
+# Start after Grobid so PDF extraction works (GROBID_URL=http://localhost:8070).
+#
+# Prerequisites:
+#   - Python/uv/venv with dependencies installed in APP_ROOT
+#   - Grobid running (deploy/grobid.service)
+#   - Optional: env file at APP_ROOT/.env with OPENAI_API_KEY, GROBID_URL, etc.
+#
+# Install:
+#   sudo cp deploy/alignment-atlas.service /etc/systemd/system/
+#   sudo systemctl edit alignment-atlas  # set User=, WorkingDirectory=, ExecStart= to match your paths
+#   # Or: sudo nano /etc/systemd/system/alignment-atlas.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable alignment-atlas
+#   sudo systemctl start alignment-atlas
+#
+# Override example (create /etc/systemd/system/alignment-atlas.service.d/override.conf):
+#   [Service]
+#   User=deploy
+#   WorkingDirectory=/var/lib/alignment-atlas
+#   ExecStart=/var/lib/alignment-atlas/.venv/bin/streamlit run app.py --server.port=8501 --server.address=0.0.0.0
+#   EnvironmentFile=/var/lib/alignment-atlas/.env
+
+[Unit]
+Description=Alignment Atlas Streamlit app
+After=network-online.target grobid.service
+Wants=network-online.target grobid.service
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=10
+
+# Customize these for your server (or use a .d override)
+User=deploy
+WorkingDirectory=/var/lib/alignment-atlas
+EnvironmentFile=-/var/lib/alignment-atlas/.env
+Environment=GROBID_URL=http://localhost:8070/api/processFulltextDocument
+ExecStart=/var/lib/alignment-atlas/.venv/bin/streamlit run app.py --server.port=8501 --server.address=0.0.0.0
+
+[Install]
+WantedBy=multi-user.target

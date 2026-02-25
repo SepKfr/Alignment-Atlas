@@ -1,0 +1,38 @@
+# Grobid PDF extraction service for Alignment Atlas
+# Ensures Grobid is running so the app can use GROBID_URL (default http://localhost:8070).
+#
+# Prerequisites:
+#   - Docker installed
+#   - Optional: pull image once: docker pull grobid/grobid:0.8.2-crf
+#
+# Install:
+#   sudo cp deploy/grobid.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable grobid
+#   sudo systemctl start grobid
+#
+# Check:
+#   curl -s http://localhost:8070/api/isalive
+
+[Unit]
+Description=Grobid PDF extraction (Alignment Atlas)
+Documentation=https://grobid.readthedocs.io/
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+
+# Remove any leftover container from a previous run
+ExecStartPre=-/usr/bin/docker rm -f grobid
+
+# Run Grobid (CRF image = CPU-only, smaller; use grobid/grobid:0.8.2-full for GPU)
+ExecStart=/usr/bin/docker run --rm --name grobid --init --ulimit core=0 -p 8070:8070 grobid/grobid:0.8.2-crf
+
+ExecStop=/usr/bin/docker stop grobid
+
+[Install]
+WantedBy=multi-user.target

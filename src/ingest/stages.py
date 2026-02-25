@@ -1902,6 +1902,7 @@ class BuildKGStage:
         processed_dir = ROOT / "data" / "processed"
         self.docs_jsonl = processed_dir / "docs.jsonl"
         self.claims_jsonl = processed_dir / "claims.jsonl"
+        self.figures_jsonl = processed_dir / "figures.jsonl"
         self.kg_dir = processed_dir / "kg"
         self.out_graphml = self.kg_dir / "graph.graphml"
         self.out_json = self.kg_dir / "graph.json"
@@ -2012,9 +2013,53 @@ class BuildKGStage:
                     a = claim_nodes[i]
                     for j in range(i + 1, len(claim_nodes)):
                         b = claim_nodes[j]
-                        g.add_edge(a, b, rel="related_by_tag", tag=tag)
-                        g.add_edge(b, a, rel="related_by_tag", tag=tag)
-                        related_edges += 2
+                g.add_edge(a, b, rel="related_by_tag", tag=tag)
+                g.add_edge(b, a, rel="related_by_tag", tag=tag)
+                related_edges += 2
+
+        n_figures = 0
+        if self.figures_jsonl.exists():
+            for rec in self._iter_jsonl(self.figures_jsonl):
+                paper_id = self._safe_str(rec.get("paper_id"))
+                figure_id = self._safe_str(rec.get("figure_id"))
+                if not paper_id or not figure_id:
+                    continue
+                node_id = f"figure:{paper_id}:{figure_id}"
+                if g.has_node(node_id):
+                    continue
+                paper_node = f"paper:{paper_id}"
+                if not g.has_node(paper_node):
+                    md = docs.get(paper_id, {})
+                    g.add_node(
+                        paper_node,
+                        type="paper",
+                        doc_id=paper_id,
+                        title=self._safe_str(md.get("title")) or paper_id,
+                        year=md.get("year"),
+                        source_type=md.get("source_type"),
+                        source_url=md.get("source_url"),
+                    )
+                    n_papers += 1
+                structured = rec.get("structured_json")
+                structured_str = (
+                    json.dumps(structured, ensure_ascii=False)
+                    if isinstance(structured, dict)
+                    else self._safe_str(structured)
+                )
+                g.add_node(
+                    node_id,
+                    type="figure",
+                    paper_id=paper_id,
+                    figure_id=figure_id,
+                    page=int(rec.get("page", 0)),
+                    caption=self._safe_str(rec.get("caption")),
+                    explanation=self._safe_str(rec.get("explanation")),
+                    image_path=self._safe_str(rec.get("image_path")),
+                    api_model=self._safe_str(rec.get("api_model")),
+                    structured_json=structured_str,
+                )
+                g.add_edge(paper_node, node_id, rel="has_figure")
+                n_figures += 1
 
         nx.write_graphml(g, self.out_graphml)
         nodes_json = []
@@ -2045,6 +2090,7 @@ class BuildKGStage:
             "papers": int(n_papers),
             "claims": int(n_claims),
             "tags": int(n_tags),
+            "figures": int(n_figures),
             "related_by_tag_edges": int(related_edges),
             "graphml_path": str(self.out_graphml.as_posix()),
             "json_path": str(self.out_json.as_posix()),
