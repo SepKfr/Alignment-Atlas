@@ -1,0 +1,64 @@
+# .github/workflows/deploy_prod.yml
+name: Deploy Production
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: prod
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Trust host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Sync to server
+        run: |
+          rsync -az --delete \
+            --exclude ".git" \
+            --exclude ".venv" \
+            --exclude "__pycache__" \
+            --exclude ".pytest_cache" \
+            ./ ubuntu@${{ secrets.SSH_HOST }}:/opt/alignment-atlas/prod/
+
+      - name: Install deps + restart + smoke test
+        run: |
+          ssh ubuntu@${{ secrets.SSH_HOST }} << 'EOF'
+            set -euo pipefail
+            cd /opt/alignment-atlas/prod
+
+            if [ ! -d ".venv" ]; then python3 -m venv .venv; fi
+            . .venv/bin/activate
+
+            python -m pip install -U pip wheel
+            if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+            sudo systemctl restart alignment-atlas
+            for i in {1..20}; do
+              if curl -fsS http://127.0.0.1:8501 >/dev/null; then
+                echo "Alignment Atlas production OK"
+                exit 0
+              fi
+              sleep 1
+            done
+
+            echo "Production smoke test failed"
+            sudo systemctl status alignment-atlas-prod --no-pager || true
+            exit 1
+          EOF
