@@ -1,5 +1,8 @@
 # Grobid PDF extraction service for Alignment Atlas
-# Ensures Grobid is running so the app can use GROBID_URL (default http://localhost:8070).
+# Runs Grobid on the server so the Streamlit app can use it for PDF extraction.
+# Set GROBID_URL in your app env (e.g. /etc/systemd/system/streamlit.env) to:
+#   GROBID_URL=http://YOUR_SERVER_IP_OR_HOSTNAME:8070/api/processFulltextDocument
+# Port 8070 is bound to 0.0.0.0 so Grobid is reachable on the server address.
 #
 # Prerequisites:
 #   - Docker installed
@@ -11,8 +14,8 @@
 #   sudo systemctl enable grobid
 #   sudo systemctl start grobid
 #
-# Check:
-#   curl -s http://localhost:8070/api/isalive
+# Check (replace with your server hostname or IP if remote):
+#   curl -s http://YOUR_SERVER:8070/api/isalive
 
 [Unit]
 Description=Grobid PDF extraction (Alignment Atlas)
@@ -30,7 +33,8 @@ TimeoutStartSec=300
 ExecStartPre=-/usr/bin/docker rm -f grobid
 
 # Run Grobid (CRF image = CPU-only, smaller; use grobid/grobid:0.8.2-full for GPU)
-ExecStart=/usr/bin/docker run --rm --name grobid --init --ulimit core=0 -p 8070:8070 grobid/grobid:0.8.2-crf
+# Bind 0.0.0.0:8070 so Grobid is reachable on the server's IP/hostname, not only localhost
+ExecStart=/usr/bin/docker run --rm --name grobid --init --ulimit core=0 -p 0.0.0.0:8070:8070 grobid/grobid:0.8.2-crf
 
 ExecStop=/usr/bin/docker stop grobid
 
