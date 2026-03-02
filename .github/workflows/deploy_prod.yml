@@ -28,22 +28,23 @@ jobs:
           set -euo pipefail
           mkdir -p ~/.ssh
 
-          # 1) Is the secret actually present?
+          # 1) Secret present?
           if [ -z "${{ secrets.SSH_HOST }}" ]; then
-            echo "SSH_HOST is empty (secret not loaded). Check environment name + secrets."
+            echo "SSH_HOST is empty (secret not loaded). Check Settings -> Environments -> prod -> Secrets."
             exit 1
           fi
+          echo "SSH_HOST present."
 
-          # 2) Does DNS resolve?
-          echo "Resolving SSH_HOST..."
+          # 2) DNS resolves?
+          echo "DNS lookup..."
           getent hosts "${{ secrets.SSH_HOST }}" || (echo "DNS resolution failed for SSH_HOST" && exit 1)
 
-          # 3) Can we reach port 22?
-          echo "Checking port 22..."
+          # 3) Port 22 reachable?
+          echo "Port 22 check..."
           timeout 5 bash -lc 'cat < /dev/null > /dev/tcp/${{ secrets.SSH_HOST }}/22' \
-            || (echo "Port 22 not reachable from GitHub runner" && exit 1)
+            || (echo "Port 22 is not reachable from GitHub runner" && exit 1)
 
-          # 4) Now record host key
+          # 4) Record host key
           ssh-keyscan -T 10 -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Sync to server
