@@ -12,72 +12,50 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, prod, alignment-atlas]
     environment: prod
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Add SSH key
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-
-      - name: Trust host key (debug)
+      - name: Deploy on server (local)
+        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p ~/.ssh
 
-          # 1) Secret present?
-          if [ -z "${{ secrets.SSH_HOST }}" ]; then
-            echo "SSH_HOST is empty (secret not loaded). Check Settings -> Environments -> prod -> Secrets."
-            exit 1
-          fi
-          echo "SSH_HOST present."
+          DEPLOY_DIR=/opt/alignment-atlas/prod
 
-          # 2) DNS resolves?
-          echo "DNS lookup..."
-          getent hosts "${{ secrets.SSH_HOST }}" || (echo "DNS resolution failed for SSH_HOST" && exit 1)
+          sudo mkdir -p "$DEPLOY_DIR"
+          sudo chown -R ubuntu:ubuntu /opt/alignment-atlas
 
-          # 3) Port 22 reachable?
-          echo "Port 22 check..."
-          timeout 5 bash -lc 'cat < /dev/null > /dev/tcp/${{ secrets.SSH_HOST }}/22' \
-            || (echo "Port 22 is not reachable from GitHub runner" && exit 1)
-
-          # 4) Record host key
-          ssh-keyscan -T 10 -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
-
-      - name: Sync to server
-        run: |
+          # Sync repo contents into deploy dir (local copy, no rsync over ssh)
           rsync -az --delete \
             --exclude ".git" \
             --exclude ".venv" \
             --exclude "__pycache__" \
             --exclude ".pytest_cache" \
-            ./ ubuntu@${{ secrets.SSH_HOST }}:/opt/alignment-atlas/prod/
+            ./ "$DEPLOY_DIR/"
 
-      - name: Install deps + restart + smoke test
-        run: |
-          ssh ubuntu@${{ secrets.SSH_HOST }} << 'EOF'
-            set -euo pipefail
-            cd /opt/alignment-atlas/prod
+          cd "$DEPLOY_DIR"
 
-            if [ ! -d ".venv" ]; then python3 -m venv .venv; fi
-            . .venv/bin/activate
+          if [ ! -d ".venv" ]; then python3 -m venv .venv; fi
+          . .venv/bin/activate
 
-            python -m pip install -U pip wheel
-            if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          python -m pip install -U pip wheel
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-            sudo systemctl restart alignment-atlas-prod
-            for i in {1..20}; do
-              if curl -fsS http://127.0.0.1:8501 >/dev/null; then
-                echo "Alignment Atlas production OK"
-                exit 0
-              fi
-              sleep 1
-            done
+          sudo systemctl restart alignment-atlas-prod
 
-            echo "Production smoke test failed"
-            sudo systemctl status alignment-atlas-prod --no-pager || true
-            exit 1
-          EOF
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8501 >/dev/null; then
+              echo "Alignment Atlas production OK"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "Production smoke test failed"
+          sudo systemctl status alignment-atlas-prod --no-pager || true
+          sudo journalctl -u alignment-atlas-prod -n 120 --no-pager || true
+          exit 1
