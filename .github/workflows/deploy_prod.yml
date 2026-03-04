@@ -1,24 +1,3 @@
-# .github/workflows/deploy_prod.yml
-name: Deploy Production
-
-on:
-  push:
-    branches: ["main"]
-  workflow_dispatch: {}
-
-concurrency:
-  group: deploy-prod
-  cancel-in-progress: true
-
-jobs:
-  deploy:
-    runs-on: [self-hosted, prod, alignment-atlas]
-    environment: prod
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Deploy on server (local)
         shell: bash
         run: |
@@ -32,21 +11,29 @@ jobs:
           # Sync repo contents into deploy dir (local copy, no rsync over ssh)
           rsync -az --delete \
             --exclude ".git" \
-            --exclude ".venv" \
             --exclude "__pycache__" \
             --exclude ".pytest_cache" \
             ./ "$DEPLOY_DIR/"
 
           cd "$DEPLOY_DIR"
 
-          if [ ! -d ".venv" ]; then python3 -m venv .venv; fi
-          . .venv/bin/activate
+          # Ensure uv exists on the self-hosted runner
+          if ! command -v uv >/dev/null 2>&1; then
+            curl -LsSf https://astral.sh/uv/install.sh | sh
+            export PATH="$HOME/.local/bin:$PATH"
+          fi
 
-          python -m pip install -U pip wheel
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          # Install deps using uv (prefer lockfile for reproducibility)
+          if [ -f uv.lock ]; then
+            uv sync --frozen
+          else
+            uv sync
+          fi
 
+          # Restart service
           sudo systemctl restart alignment-atlas-prod
 
+          # Smoke test
           for i in {1..30}; do
             if curl -fsS http://127.0.0.1:8501 >/dev/null; then
               echo "Alignment Atlas production OK"

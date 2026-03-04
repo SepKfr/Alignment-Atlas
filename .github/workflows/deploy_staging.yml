@@ -1,25 +1,3 @@
-# .github/workflows/deploy_staging.yml
-name: Deploy Staging
-
-on:
-  push:
-    branches: ["main"]
-  workflow_dispatch: {}
-
-concurrency:
-  group: deploy-staging
-  cancel-in-progress: true
-
-jobs:
-  deploy:
-    # Use your self-hosted runner on the EC2 (no SSH needed)
-    runs-on: [self-hosted]
-    environment: staging
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Deploy on server (local)
         shell: bash
         run: |
@@ -33,19 +11,25 @@ jobs:
           # Copy repo contents into the staging deploy dir
           rsync -az --delete \
             --exclude ".git" \
-            --exclude ".venv" \
             --exclude "__pycache__" \
             --exclude ".pytest_cache" \
             ./ "$DEPLOY_DIR/"
 
           cd "$DEPLOY_DIR"
 
-          # Python deps
-          if [ ! -d ".venv" ]; then python3 -m venv .venv; fi
-          . .venv/bin/activate
+          # Ensure uv exists on the self-hosted runner
+          if ! command -v uv >/dev/null 2>&1; then
+            curl -LsSf https://astral.sh/uv/install.sh | sh
+            export PATH="$HOME/.local/bin:$PATH"
+          fi
 
-          python -m pip install -U pip wheel
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          # Install deps using uv
+          # Prefer lockfile for reproducible deploys:
+          if [ -f uv.lock ]; then
+            uv sync --frozen
+          else
+            uv sync
+          fi
 
           # Restart service
           sudo systemctl restart alignment-atlas-staging
