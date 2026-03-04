@@ -1,49 +1,49 @@
-      - name: Deploy on server (local)
-        shell: bash
-        run: |
-          set -euo pipefail
+name: Deploy on server (local)
+shell: bash
+run: |
+  set -euo pipefail
 
-          DEPLOY_DIR=/opt/alignment-atlas/staging
+  DEPLOY_DIR=/opt/alignment-atlas/staging
 
-          sudo mkdir -p "$DEPLOY_DIR"
-          sudo chown -R ubuntu:ubuntu /opt/alignment-atlas
+  sudo mkdir -p "$DEPLOY_DIR"
+  sudo chown -R ubuntu:ubuntu /opt/alignment-atlas
 
-          # Copy repo contents into the staging deploy dir
-          rsync -az --delete \
-            --exclude ".git" \
-            --exclude "__pycache__" \
-            --exclude ".pytest_cache" \
-            ./ "$DEPLOY_DIR/"
+  # Copy repo contents into the staging deploy dir
+  rsync -az --delete \
+    --exclude ".git" \
+    --exclude "__pycache__" \
+    --exclude ".pytest_cache" \
+    ./ "$DEPLOY_DIR/"
 
-          cd "$DEPLOY_DIR"
+  cd "$DEPLOY_DIR"
 
-          # Ensure uv exists on the self-hosted runner
-          if ! command -v uv >/dev/null 2>&1; then
-            curl -LsSf https://astral.sh/uv/install.sh | sh
-            export PATH="$HOME/.local/bin:$PATH"
-          fi
+  # Ensure uv exists on the self-hosted runner
+  if ! command -v uv >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+  fi
 
-          # Install deps using uv
-          # Prefer lockfile for reproducible deploys:
-          if [ -f uv.lock ]; then
-            uv sync --frozen
-          else
-            uv sync
-          fi
+  # Install deps using uv
+  # Prefer lockfile for reproducible deploys:
+  if [ -f uv.lock ]; then
+    uv sync --frozen
+  else
+    uv sync
+  fi
 
-          # Restart service
-          sudo systemctl restart alignment-atlas-staging
+  # Restart service
+  sudo systemctl restart alignment-atlas-staging
 
-          # Smoke test
-          for i in {1..30}; do
-            if curl -fsS http://127.0.0.1:8502 >/dev/null; then
-              echo "Alignment Atlas staging OK"
-              exit 0
-            fi
-            sleep 1
-          done
+  # Smoke test
+  for i in {1..30}; do
+    if curl -fsS http://127.0.0.1:8502 >/dev/null; then
+      echo "Alignment Atlas staging OK"
+      exit 0
+    fi
+    sleep 1
+  done
 
-          echo "Staging smoke test failed"
-          sudo systemctl status alignment-atlas-staging --no-pager || true
-          sudo journalctl -u alignment-atlas-staging -n 120 --no-pager || true
-          exit 1
+  echo "Staging smoke test failed"
+  sudo systemctl status alignment-atlas-staging --no-pager || true
+  sudo journalctl -u alignment-atlas-staging -n 120 --no-pager || true
+  exit 1
