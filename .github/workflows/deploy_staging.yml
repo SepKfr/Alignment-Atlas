@@ -1,49 +1,65 @@
-name: Deploy on server (local)
-shell: bash
-run: |
-  set -euo pipefail
+# .github/workflows/deploy_staging.yml
+name: Deploy Staging
 
-  DEPLOY_DIR=/opt/alignment-atlas/staging
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch: {}
 
-  sudo mkdir -p "$DEPLOY_DIR"
-  sudo chown -R ubuntu:ubuntu /opt/alignment-atlas
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: true
 
-  # Copy repo contents into the staging deploy dir
-  rsync -az --delete \
-    --exclude ".git" \
-    --exclude "__pycache__" \
-    --exclude ".pytest_cache" \
-    ./ "$DEPLOY_DIR/"
+jobs:
+  deploy:
+    # Use your self-hosted runner on the EC2 (no SSH needed)
+    runs-on: [self-hosted]
+    environment: staging
 
-  cd "$DEPLOY_DIR"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  # Ensure uv exists on the self-hosted runner
-  if ! command -v uv >/dev/null 2>&1; then
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.local/bin:$PATH"
-  fi
+      - name: Deploy on server (local)
+        shell: bash
+        run: |
+          set -euo pipefail
 
-  # Install deps using uv
-  # Prefer lockfile for reproducible deploys:
-  if [ -f uv.lock ]; then
-    uv sync --frozen
-  else
-    uv sync
-  fi
+          DEPLOY_DIR=/opt/alignment-atlas/staging
 
-  # Restart service
-  sudo systemctl restart alignment-atlas-staging
+          sudo mkdir -p "$DEPLOY_DIR"
+          sudo chown -R ubuntu:ubuntu /opt/alignment-atlas
 
-  # Smoke test
-  for i in {1..30}; do
-    if curl -fsS http://127.0.0.1:8502 >/dev/null; then
-      echo "Alignment Atlas staging OK"
-      exit 0
-    fi
-    sleep 1
-  done
+          # Copy repo contents into the staging deploy dir
+          rsync -az --delete \
+            --exclude ".git" \
+            --exclude ".venv" \
+            --exclude "__pycache__" \
+            --exclude ".pytest_cache" \
+            ./ "$DEPLOY_DIR/"
 
-  echo "Staging smoke test failed"
-  sudo systemctl status alignment-atlas-staging --no-pager || true
-  sudo journalctl -u alignment-atlas-staging -n 120 --no-pager || true
-  exit 1
+          cd "$DEPLOY_DIR"
+
+          # Python deps
+          if [ ! -d ".venv" ]; then python3 -m venv .venv; fi
+          . .venv/bin/activate
+
+          python -m pip install -U pip wheel
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+          # Restart service
+          sudo systemctl restart alignment-atlas-staging
+
+          # Smoke test
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8502 >/dev/null; then
+              echo "Alignment Atlas staging OK"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "Staging smoke test failed"
+          sudo systemctl status alignment-atlas-staging --no-pager || true
+          sudo journalctl -u alignment-atlas-staging -n 120 --no-pager || true
+          exit 1

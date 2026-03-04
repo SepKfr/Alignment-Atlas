@@ -1,48 +1,61 @@
+# .github/workflows/deploy_prod.yml
 name: Deploy Production
-shell: bash
-run: |
-  set -euo pipefail
 
-  DEPLOY_DIR=/opt/alignment-atlas/prod
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch: {}
 
-  sudo mkdir -p "$DEPLOY_DIR"
-  sudo chown -R ubuntu:ubuntu /opt/alignment-atlas
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: true
 
-  # Sync repo contents into deploy dir (local copy, no rsync over ssh)
-  rsync -az --delete \
-    --exclude ".git" \
-    --exclude "__pycache__" \
-    --exclude ".pytest_cache" \
-    ./ "$DEPLOY_DIR/"
+jobs:
+  deploy:
+    runs-on: [self-hosted, prod, alignment-atlas]
+    environment: prod
 
-  cd "$DEPLOY_DIR"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  # Ensure uv exists on the self-hosted runner
-  if ! command -v uv >/dev/null 2>&1; then
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.local/bin:$PATH"
-  fi
+      - name: Deploy on server (local)
+        shell: bash
+        run: |
+          set -euo pipefail
 
-  # Install deps using uv (prefer lockfile for reproducibility)
-  if [ -f uv.lock ]; then
-    uv sync --frozen
-  else
-    uv sync
-  fi
+          DEPLOY_DIR=/opt/alignment-atlas/prod
 
-  # Restart service
-  sudo systemctl restart alignment-atlas-prod
+          sudo mkdir -p "$DEPLOY_DIR"
+          sudo chown -R ubuntu:ubuntu /opt/alignment-atlas
 
-  # Smoke test
-  for i in {1..30}; do
-    if curl -fsS http://127.0.0.1:8501 >/dev/null; then
-      echo "Alignment Atlas production OK"
-      exit 0
-    fi
-    sleep 1
-  done
+          # Sync repo contents into deploy dir (local copy, no rsync over ssh)
+          rsync -az --delete \
+            --exclude ".git" \
+            --exclude ".venv" \
+            --exclude "__pycache__" \
+            --exclude ".pytest_cache" \
+            ./ "$DEPLOY_DIR/"
 
-  echo "Production smoke test failed"
-  sudo systemctl status alignment-atlas-prod --no-pager || true
-  sudo journalctl -u alignment-atlas-prod -n 120 --no-pager || true
-  exit 1
+          cd "$DEPLOY_DIR"
+
+          if [ ! -d ".venv" ]; then python3 -m venv .venv; fi
+          . .venv/bin/activate
+
+          python -m pip install -U pip wheel
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+          sudo systemctl restart alignment-atlas-prod
+
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8501 >/dev/null; then
+              echo "Alignment Atlas production OK"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "Production smoke test failed"
+          sudo systemctl status alignment-atlas-prod --no-pager || true
+          sudo journalctl -u alignment-atlas-prod -n 120 --no-pager || true
+          exit 1
