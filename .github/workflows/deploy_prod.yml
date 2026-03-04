@@ -39,11 +39,10 @@ jobs:
 
           cd "$DEPLOY_DIR"
 
-          if [ ! -d ".venv" ]; then python3 -m venv .venv; fi
-          . .venv/bin/activate
+          command -v uv >/dev/null 2>&1 || { curl -LsSf https://astral.sh/uv/install.sh | sh; export PATH="$HOME/.local/bin:$PATH"; }
 
-          python -m pip install -U pip wheel
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          # Install deps (prefer lockfile if you have it)
+          if [ -f uv.lock ]; then uv sync --frozen; else uv sync; fi
 
           sudo systemctl restart alignment-atlas-prod
 
